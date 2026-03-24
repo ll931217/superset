@@ -1,0 +1,71 @@
+name: Release Desktop App (Linux x64)
+
+on:
+  workflow_run:
+    workflows: ["Build Desktop App (Linux x64)"]
+    types:
+      - completed
+  workflow_dispatch:
+    inputs:
+      run_id:
+        description: "Build workflow run ID to pull artifacts from"
+        required: true
+        type: string
+      tag:
+        description: "Release tag (e.g., desktop-linux-v1.0.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create GitHub Release
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve run ID and tag
+        id: ctx
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "run_id=${{ inputs.run_id }}" >> $GITHUB_OUTPUT
+            echo "tag=${{ inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            RUN_ID="${{ github.event.workflow_run.id }}"
+            SHA="${{ github.event.workflow_run.head_sha }}"
+            SHORT_SHA="${SHA:0:7}"
+            echo "run_id=${RUN_ID}" >> $GITHUB_OUTPUT
+            echo "tag=desktop-linux-${SHORT_SHA}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Download artifacts from build run
+        uses: actions/download-artifact@v4
+        with:
+          run-id: ${{ steps.ctx.outputs.run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          path: release-artifacts
+          pattern: desktop-linux-*
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la release-artifacts/
+
+      - name: Create Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.ctx.outputs.tag }}"
+          gh release create "${TAG}" \
+            release-artifacts/* \
+            --title "Superset Desktop Linux ${TAG}" \
+            --notes "Linux x64 build from run [${{ steps.ctx.outputs.run_id }}](https://github.com/${{ github.repository }}/actions/runs/${{ steps.ctx.outputs.run_id }})" \
+            --draft
